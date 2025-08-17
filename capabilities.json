@@ -1,0 +1,183 @@
+{
+  "version": "1.6",
+  "registries": {
+    "tools": [
+      {
+        "id": "NativeTools.web.search",
+        "description": "执行网络搜索",
+        "implementation_path": "native_tools_service.web.search.run",
+        "signature": {
+          "parameters": {
+            "query": "string",
+            "max_results": "integer"
+          },
+          "return_type": "SearchResult[]"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "搜索查询词"
+            },
+            "max_results": {
+              "type": "integer",
+              "description": "最大结果数",
+              "default": 5
+            }
+          },
+          "required": ["query"]
+        },
+        "allowed_post_actions": ["FINAL_ANSWER"]
+      },
+      {
+        "id": "System.WorkflowBuilder.create_plan",
+        "description": "工作流生成器",
+        "implementation_path": "system.tools.workflow_builder.run",
+        "signature": {
+          "parameters": {
+            "blueprint_schema": "PlanBlueprint"
+          },
+          "return_type": "VALIDATION_REPORT"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "blueprint_schema": {
+              "type": "object",
+              "description": "工作流蓝图模式"
+            }
+          },
+          "required": ["blueprint_schema"]
+        }
+      },
+      {
+        "id": "NativeTools.file.read",
+        "description": "读取文件内容",
+        "implementation_path": "native_tools_service.file.read.run",
+        "signature": {
+          "parameters": {
+            "file_path": "string"
+          },
+          "return_type": "string"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "file_path": {
+              "type": "string",
+              "description": "要读取的文件路径"
+            }
+          },
+          "required": ["file_path"]
+        }
+      },
+      {
+        "id": "TestTools.hello",
+        "description": "测试工具 - 问候",
+        "implementation_path": "toolservices.test_tools.hello_tool",
+        "signature": {
+          "parameters": {
+            "name": "string"
+          },
+          "return_type": "object"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "要问候的名称"
+            }
+          },
+          "required": ["name"]
+        }
+      },
+      {
+        "id": "TestTools.calculator",
+        "description": "测试工具 - 计算器",
+        "implementation_path": "toolservices.test_tools.calculator_tool",
+        "signature": {
+          "parameters": {
+            "operation": "string",
+            "a": "number",
+            "b": "number"
+          },
+          "return_type": "object"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string",
+              "description": "操作类型 (add, subtract, multiply, divide)",
+              "enum": ["add", "subtract", "multiply", "divide"]
+            },
+            "a": {
+              "type": "number",
+              "description": "第一个操作数"
+            },
+            "b": {
+              "type": "number",
+              "description": "第二个操作数"
+            }
+          },
+          "required": ["operation", "a", "b"]
+        }
+      },
+      {
+        "id": "TestTools.failing",
+        "description": "测试工具 - 总是失败",
+        "implementation_path": "toolservices.test_tools.failing_tool",
+        "signature": {
+          "parameters": {
+            "message": "string"
+          },
+          "return_type": "object"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "错误消息"
+            }
+          },
+          "required": ["message"]
+        }
+      }
+    ],
+    "agents": [
+      {
+        "id": "GenericPlannerAgent",
+        "role": "PLANNER",
+        "description": "一个通用的、由提示词驱动的规划Agent。",
+        "implementation_path": "system.agents.generic_planner.GenericPlanner"
+      },
+      {
+        "id": "Coder_v1",
+        "role": "WORKER",
+        "description": "一个需要复杂代码后处理的Terraform专家。",
+        "implementation_path": "custom_agents.coder_agent.CoderAgent",
+        "base_prompt": "You are an expert Python programmer. CRITICAL_RULE: Always write clean, efficient, and well-documented code.",
+        "prompt_fusion_strategy": {
+          "mode": "PREPEND_BASE"
+        }
+      }
+    ],
+    "groups": [
+      {
+        "id": "CentralDecisionGroup",
+        "description": "接收所有初始请求，并进行顶层规划与协调。",
+        "planner_agent_id": "GenericPlannerAgent",
+        "planner_prompt_template": "As the master planner, your task is to analyze the user's request '{user_request}' and create a detailed PlanBlueprint. The available teams are: {team_list}.",
+        "authorized_tools": ["System.WorkflowBuilder.create_plan"],
+        "execution_patterns": {
+          "top_level_decomposition": {
+            "description": "顶层需求分解模式"
+          }
+        }
+      }
+    ]
+  }
+}

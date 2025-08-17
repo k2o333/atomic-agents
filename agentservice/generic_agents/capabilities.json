@@ -1,0 +1,29 @@
+{
+  "capabilities": [
+    {
+      "id": "hello_world_agent",
+      "name": "Hello World Agent",
+      "description": "A simple agent that returns a hard-coded 'Hello World!' response for testing connectivity",
+      "version": "1.0.0",
+      "type": "GENERIC",
+      "role": "WORKER",
+      "implementation_path": "agentservice.generic_agents.HelloWorldAgent",
+      "entry_point": "HelloWorldAgent",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The hello world message"
+          }
+        },
+        "required": ["content"]
+      }
+    }
+  ]
+}
