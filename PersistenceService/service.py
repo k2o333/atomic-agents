@@ -149,8 +149,14 @@ class PersistenceService:
                     # Create edges
                     for edge_def in blueprint.new_edges:
                         # Convert blueprint task IDs to actual task IDs
-                        source_task_id = task_id_mapping.get(edge_def.source_task_id, UUID(edge_def.source_task_id))
-                        target_task_id = task_id_mapping.get(edge_def.target_task_id, UUID(edge_def.target_task_id))
+                        source_task_id = task_id_mapping.get(edge_def.source_task_id, edge_def.source_task_id)
+                        target_task_id = task_id_mapping.get(edge_def.target_task_id, edge_def.target_task_id)
+                        
+                        # Convert to UUID if they are strings
+                        if isinstance(source_task_id, str):
+                            source_task_id = UUID(source_task_id)
+                        if isinstance(target_task_id, str):
+                            target_task_id = UUID(target_task_id)
                         
                         self.edge_repo.create_edge(
                             workflow_id=blueprint.workflow_id,
@@ -205,6 +211,21 @@ class PersistenceService:
             logger.info("Updating task context through service", extra={"task_id": str(task_id)})
             updated = self.task_repo.update_task_context(task_id, context)
             logger.info("Task context updated through service", extra={"task_id": str(task_id), "updated": updated})
+            return updated
+    
+    def update_task_input_and_status(self, task_id: UUID, input_data: Dict[str, Any], status: str) -> bool:
+        """Update task input data and status."""
+        with TracerContextManager.start_span("PersistenceService.update_task_input_and_status"):
+            logger.info("Updating task input data and status through service", extra={
+                "task_id": str(task_id),
+                "status": status
+            })
+            updated = self.task_repo.update_task_input_and_status(task_id, input_data, status)
+            logger.info("Task input data and status updated through service", extra={
+                "task_id": str(task_id),
+                "status": status,
+                "updated": updated
+            })
             return updated
     
     def close(self) -> None:

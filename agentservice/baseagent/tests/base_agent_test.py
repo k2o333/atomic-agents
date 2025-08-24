@@ -10,12 +10,22 @@ from unittest.mock import Mock
 
 # Add the project root to the path so we can import the agents module
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from agents.base_agent import BaseAgent
+from agentservice.baseagent.base_agent import BaseAgent
+from interfaces import PlanBlueprint, TaskDefinition, EdgeDefinition
 
 
 class TestAgent(BaseAgent):
     """Test implementation of BaseAgent for testing purposes"""
+    
+    def __init__(self, agent_config=None, task_data=None, group_config=None):
+        # If no config is provided, use default values
+        if agent_config is None:
+            agent_config = {}
+        if task_data is None:
+            task_data = {}
+        super().__init__(agent_config, task_data, group_config)
     
     def _generate_dynamic_prompt(self) -> str:
         return "Test prompt"
@@ -24,6 +34,45 @@ class TestAgent(BaseAgent):
         return self.create_final_answer(
             thought="Handled LLM response",
             content=llm_response.get("content", "default")
+        )
+
+
+class TestPlannerAgent(BaseAgent):
+    """Test implementation of a Planner agent for testing purposes"""
+    
+    def __init__(self, agent_config=None, task_data=None, group_config=None):
+        # If no config is provided, use default values
+        if agent_config is None:
+            agent_config = {}
+        if task_data is None:
+            task_data = {}
+        super().__init__(agent_config, task_data, group_config)
+    
+    def _generate_dynamic_prompt(self) -> str:
+        return "Test planner prompt"
+    
+    def _handle_llm_response(self, llm_response: Dict) -> Dict:
+        return self.create_final_answer(
+            thought="Handled LLM response",
+            content=llm_response.get("content", "default")
+        )
+    
+    def _generate_plan_blueprint(self) -> PlanBlueprint:
+        """Generate a test plan blueprint"""
+        task = TaskDefinition(
+            task_id="test_task_1",
+            input_data={"test": "data"},
+            assignee_id="test_worker"
+        )
+        
+        edge = EdgeDefinition(
+            source_task_id="test_task_1",
+            target_task_id="test_task_2"
+        )
+        
+        return PlanBlueprint(
+            new_tasks=[task],
+            new_edges=[edge]
         )
 
 
@@ -43,6 +92,30 @@ class TestBaseAgent(unittest.TestCase):
         self.assertEqual(agent.task_data, self.task_data)
         self.assertEqual(agent.group_config, self.group_config)
         self.assertIsNotNone(agent.logger)
+        self.assertEqual(agent.context_config, {})
+        self.assertEqual(agent.prompt_fusion_strategy, {})
+    
+    def test_initialization_with_context_config(self):
+        """Test BaseAgent initialization with context config"""
+        agent_config_with_context = {
+            "name": "test_agent", 
+            "version": "1.0",
+            "context_config": {"include_metadata": True}
+        }
+        agent = TestAgent(agent_config_with_context, self.task_data)
+        
+        self.assertEqual(agent.context_config, {"include_metadata": True})
+    
+    def test_initialization_with_prompt_fusion_strategy(self):
+        """Test BaseAgent initialization with prompt fusion strategy"""
+        agent_config_with_fusion = {
+            "name": "test_agent", 
+            "version": "1.0",
+            "prompt_fusion_strategy": {"mode": "PREPEND_BASE"}
+        }
+        agent = TestAgent(agent_config_with_fusion, self.task_data)
+        
+        self.assertEqual(agent.prompt_fusion_strategy, {"mode": "PREPEND_BASE"})
     
     def test_is_first_run_true(self):
         """Test is_first_run returns True when no previous results exist"""
@@ -162,6 +235,63 @@ class TestBaseAgent(unittest.TestCase):
         self.assertEqual(result["failure_details"]["type"], error_type)
         self.assertEqual(result["failure_details"]["message"], message)
         self.assertIn("Agent execution failed", result["output"]["intent"]["content"])
+    
+    def test_apply_prompt_fusion_prepend_base(self):
+        """Test prompt fusion with PREPEND_BASE strategy"""
+        agent_config_with_fusion = {
+            "name": "test_agent", 
+            "version": "1.0",
+            "base_prompt": "You are a helpful assistant.",
+            "prompt_fusion_strategy": {"mode": "PREPEND_BASE"}
+        }
+        agent = TestAgent(agent_config_with_fusion, self.task_data)
+        
+        dynamic_prompt = "What is the weather today?"
+        final_prompt = agent._apply_prompt_fusion(dynamic_prompt)
+        
+        expected_prompt = "You are a helpful assistant.\n\nWhat is the weather today?"
+        self.assertEqual(final_prompt, expected_prompt)
+    
+    def test_apply_prompt_fusion_no_strategy(self):
+        """Test prompt fusion with no strategy (default)"""
+        agent_config_no_fusion = {
+            "name": "test_agent", 
+            "version": "1.0"
+        }
+        agent = TestAgent(agent_config_no_fusion, self.task_data)
+        
+        dynamic_prompt = "What is the weather today?"
+        final_prompt = agent._apply_prompt_fusion(dynamic_prompt)
+        
+        self.assertEqual(final_prompt, dynamic_prompt)
+    
+    def test_is_planner_agent_true(self):
+        """Test _is_planner_agent returns True for Planner agents"""
+        planner_config = {
+            "name": "test_planner", 
+            "version": "1.0",
+            "role": "PLANNER"
+        }
+        agent = TestAgent(planner_config, self.task_data)
+        
+        self.assertTrue(agent._is_planner_agent())
+    
+    def test_is_planner_agent_false(self):
+        """Test _is_planner_agent returns False for non-Planner agents"""
+        worker_config = {
+            "name": "test_worker", 
+            "version": "1.0",
+            "role": "WORKER"
+        }
+        agent = TestAgent(worker_config, self.task_data)
+        
+        self.assertFalse(agent._is_planner_agent())
+    
+    def test_is_planner_agent_default_false(self):
+        """Test _is_planner_agent returns False when no role is specified"""
+        agent = TestAgent(self.agent_config, self.task_data)
+        
+        self.assertFalse(agent._is_planner_agent())
 
 
 if __name__ == '__main__':

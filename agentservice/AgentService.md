@@ -1,33 +1,31 @@
 # Agent Service Development Documentation
 
-## Module Overview
+## **模块概述**
 
-The Agent Service is a core component of the Synapse platform responsible for instantiating and executing Agent scripts. It acts as the execution environment for all Agent logic, dynamically loading and running Agent implementations based on capability definitions.
+Agent服务 (Agent Service) 是Synapse平台负责实例化和执行Agent脚本的核心组件。它作为所有Agent逻辑的执行环境，根据能力定义（`capabilities.json`），动态地加载和运行Agent的实现。
 
-This document provides a comprehensive guide to developing and extending the Agent Service.
+## **1. 目的与职责**
 
-## 1. Purpose and Responsibilities
+Agent服务是Synapse平台中所有Agent的“**执行运行时 (Execution Runtime)**”。其主要职责包括：
 
-The Agent Service serves as the "execution environment" for all Agents in the Synapse platform. Its primary responsibilities include:
+1.  **动态Agent加载**: 根据`capabilities.json`中定义的`implementation_path`加载Agent实现。
+2.  **上下文构建**: 在执行Agent前，调用内部的`ContextBuilder`，为Agent准备好所有必需的上下文和提示词。
+3.  **Agent执行**: 根据Agent的类型（通用或自定义）运行Agent脚本。
+4.  **结果标准化**: 确保所有Agent的输出都严格遵循`AgentResult`规范。
+5.  **追踪与日志**: 为每一次Agent执行提供分布式的追踪和结构化日志。
 
-1. **Dynamic Agent Loading**: Loading Agent implementations based on `implementation_path` defined in `capabilities.json`
-2. **Agent Execution**: Running Agent scripts according to their type (Generic or Custom)
-3. **Result Standardization**: Ensuring all Agent outputs conform to the `AgentResult` specification
-4. **Integration with Other Services**: Coordinating with Context Service, LLM Gateway Service, and Tool Service as needed
-5. **Tracing and Logging**: Providing distributed tracing capabilities for Agent executions
+## **2. 架构**
 
-## 2. Architecture
+Agent服务遵循一个模块化的架构，以支持各种Agent类型的动态加载和执行：
 
-The Agent Service follows a modular architecture that enables dynamic loading and execution of various Agent types:
+1.  **Agent工厂 (Agent Factory)**: 负责根据能力定义创建Agent实例。
+2.  **上下文构建器 (Context Builder)**: **【核心组件】** 负责实现完整的上下文构建生命周期。它解析Agent的`context_config`，按需从`PersistenceService`等底层服务拉取数据，执行提示词融合，并注入全局约束。
+3.  **Agent执行器 (Agent Executor)**: 负责执行Agent的`.run()`方法，使用由`ContextBuilder`提供的上下文。
+4.  **BaseAgent基类 (SDK核心)**: 为所有Agent类型提供通用的功能和接口。
+5.  **通用Agent实现**: 预置的、由配置驱动的Agent模板（如`GenericWorkerAgent`）。
+6.  **结果校验器 (Result Validator)**: 确保所有输出都符合`AgentResult`规范。
 
-1. **Agent Factory**: Responsible for creating Agent instances based on capability definitions
-2. **Agent Executor**: Handles the actual execution of Agent scripts
-3. **Base Agent Class**: Provides common functionality and interfaces for all Agent types
-4. **Generic Agent Implementations**: Pre-built Agent templates for common use cases
-5. **Result Validator**: Ensures all outputs conform to the `AgentResult` specification
-
-**Important Boundary**: `AgentService` **only responsible for executing a single Agent's `.run()` method and returning its intent**. It **does not concern itself** with any workflow logic, such as: where the Agent should go next after execution (determined by the `Engine`'s `Edge`), or how the Agent was invoked (could be a linear task or part of a parallel loop). This strict separation of responsibilities ensures that `AgentService` is a pure, reusable "**Agent Execution Runtime**".
-
+**重要边界**: `AgentService`**只负责执行单个Agent的`.run()`方法并返回其意图**。它**不关心**任何工作流逻辑，例如Agent执行完后下一步该去哪里（由`图引擎`的`Edge`决定），或Agent是如何被调用的（可能是线性任务或并行循环的一部分）。这种严格的职责分离，确保了`AgentService`是一个纯粹的、可复用的“**Agent执行运行时**”。
 ## 3. M1 Implementation Details
 
 ### 3.1. Core Requirements
@@ -80,11 +78,10 @@ class HelloWorldAgent:
         return AgentResult(status="SUCCESS", output=output)
 ```
 
-## 4. M2 Implementation Details
+## **4. M2实现细节**
 
-### 4.0. The BaseAgent SDK
-
-The core of the M2 phase is delivering a fully-featured `BaseAgent` base class. This class is the **Software Development Kit (SDK)** for all custom Agent developers. It encapsulates all the complexity of interacting with the system (such as handling re-entry, requesting LLM/Tool calls, and creating standard intent formats), allowing Agent developers to focus purely on business logic.
+#### **4.0. BaseAgent SDK**
+M2阶段的核心，是交付一个功能完备的`BaseAgent`基类。这个类是所有自定义Agent开发者的**软件开发工具包（SDK）**。它封装了所有与系统交互的复杂性（如处理重入、请求LLM/Tool、创建标准意图格式），让Agent开发者可以专注于业务逻辑本身。
 
 ### 4.1. Enhanced Agent Support
 
@@ -130,37 +127,35 @@ The Agent Service must support custom Agent implementations:
    - Must support Agents that need to process LLM or Tool responses
    - Must provide mechanisms to determine if this is the first execution or a re-entry
 
-## 5. M3 Implementation Details
+## **5. M3实现细节**
 
-### 5.1. Planner Support
+### **5.1. Planner支持**
 
-In M3, the Agent Service must support Planner Agents:
+1.  **规划生成**:
+    *   必须支持返回`PlanBlueprint`意图的Agent。
+    *   必须校验只有`role: PLANNER`的Agent才能返回`PlanBlueprint`意图。
 
-1. **Plan Generation**:
-   - Must support Agents that return `PlanBlueprint` intents
-   - Must validate that only Agents with `role: PLANNER` return PlanBlueprint intents
+2.  **上下文集成**:
+    *   在执行任何Agent（无论是Planner还是Worker）**之前**，`AgentService`会首先检查其在`capabilities.json`中定义的`context_config`。然后，它会调用内部的`ContextBuilder`来预构建上下文。**这个上下文将作为`task_data`的一部分，在Agent实例化时被传递。** Agent脚本本身不需要直接调用上下文服务。
 
-2. **Context Integration**:
-   - `AgentService` will first check the `context_config` defined for the Agent in `capabilities.json` before executing any Agent (whether Planner or Worker). Then, it will call the `ContextService` to pre-build the context. **This context will be part of the `task_data` and passed to the Agent during instantiation.** The Agent script itself does not need to directly call the `ContextService`.
+### **5.2. 高级特性**
 
-### 5.2. Advanced Features
+1.  **提示词融合**:
+    *   必须实现`capabilities.json`中定义的`prompt_fusion_strategy`生命周期。
+    *   必须支持不同的融合策略（`PREPEND_BASE`等）。
 
-1. **Prompt Fusion**:
-   - Must implement the prompt fusion lifecycle as defined in the specification
-   - Must support different fusion strategies (PREPEND_BASE, etc.)
+2.  **错误处理**:
+    *   必须能正确处理和报告Agent执行失败。
+    *   必须能将执行过程中捕获的异常，转换为符合`AgentResult`规范的、包含`failure_details`的`FAILURE`状态对象。
 
-2. **Error Handling**:
-   - Must properly handle and report Agent execution failures
-   - Must convert exceptions into properly formatted `AgentResult` objects with FAILURE status
+## **6. 依赖**
 
-## 6. Dependencies
-
-- Python 3.11+
-- `interfaces` module
-- `LoggingService` module
-- `CapabilityInitializer` module (for accessing capability registry)
-- `ContextService` module (M2+)
-- `LLMService` module (indirectly through Tool calls, M2+)
+*   Python 3.11+
+*   `interfaces` 模块
+*   `LoggingService` 模块
+*   `CapabilityInitializer` 模块 (用于访问能力注册表)
+*   **`PersistenceService` 和其他底层服务** (由内部的`ContextBuilder`调用)
+*   `LLMService` (间接通过返回`System.LLM.invoke`意图来交互)
 
 ## 7. Testing
 
@@ -199,3 +194,4 @@ The Agent Service should be tested with:
 - Implement sandboxing for Agent execution
 - Add input validation and sanitization
 - Implement access control for Agent capabilities
+

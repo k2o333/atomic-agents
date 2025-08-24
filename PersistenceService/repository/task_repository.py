@@ -193,3 +193,26 @@ class TaskRepository:
                     else:
                         logger.warning("Task not found for context update", extra={"task_id": str(task_id)})
                     return updated
+    
+    def update_task_input_and_status(self, task_id: UUID, input_data: Dict[str, Any], status: str) -> bool:
+        """Update task input data and status."""
+        with TracerContextManager.start_span("TaskRepository.update_task_input_and_status"):
+            logger.info("Updating task input data and status", extra={
+                "task_id": str(task_id),
+                "status": status
+            })
+            
+            with self.db_manager.get_db_session() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE tasks
+                        SET input_data = %s, status = %s, updated_at = NOW()
+                        WHERE id = %s
+                    """, (json.dumps(input_data), status, str(task_id)))
+                    
+                    updated = cur.rowcount > 0
+                    if updated:
+                        logger.info("Task input data and status updated successfully", extra={"task_id": str(task_id)})
+                    else:
+                        logger.warning("Task not found for input data and status update", extra={"task_id": str(task_id)})
+                    return updated

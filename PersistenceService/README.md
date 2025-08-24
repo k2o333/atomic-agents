@@ -10,6 +10,8 @@ The PersistenceService is the database service module for the Synapse platform. 
 - Task history/versioning support
 - JSONB query support
 - Integration with the Logging & Tracing Service
+- PostgreSQL triggers for event-driven architecture
+- Notify handler for real-time task queue management
 
 ## Module Interface and How to Call
 

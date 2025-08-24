@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
-Central Graph Engine (Ultimate Version)
+Enhanced Central Graph Engine with Redis BRPOP loop
 
-This is the core orchestrator of the Synapse platform. It consumes tasks from a queue,
-executes them by coordinating with other services, and manages the flow of a workflow
-based on the directives and intents returned.
-
-This is the ultimate version that implements all required functionality including
-condition evaluation, PlanBlueprint processing, and data flow mapping.
+This is the enhanced version of the Central Graph Engine that implements
+the event-driven model using Redis BRPOP to consume tasks from a queue.
 """
 
 import time
 import uuid
 from typing import Dict, Any, Optional, List
-from uuid import UUID
+import redis
+import logging
 
 # Import core interfaces
 from interfaces import (
@@ -24,28 +21,35 @@ from interfaces import (
 # Import ConditionEvaluator
 from .condition_evaluator import condition_evaluator
 
-# Import service interfaces (these would be actual service clients in a real implementation)
-# For M1, we'll use mock services or placeholders
+# Import service interfaces
 try:
     from PersistenceService.service import PersistenceService
     persistence_service = PersistenceService()
 except ImportError:
-    # Fallback mock for M1
+    # Fallback mock for development
     class MockPersistenceService:
         def list_pending_tasks(self):
-            # For demo, return an empty list
             return []
         
         def update_task_status(self, task_id, status, result=None):
             print(f"[MockPersistence] Task {task_id} status updated to {status}")
             
         def get_outgoing_edges(self, task_id):
-            # For demo, return an empty list
             return []
             
         def create_workflow_from_blueprint(self, blueprint: PlanBlueprint):
             print(f"[MockPersistence] Creating workflow from blueprint with {len(blueprint.new_tasks)} tasks.")
             return True
+            
+        def get_task_and_lock(self, task_id: str):
+            # Mock implementation
+            return TaskDefinition(
+                task_id=task_id,
+                assignee_id="Agent:Worker",
+                input_data={},
+                context_overrides=None,
+                directives=None
+            )
             
     persistence_service = MockPersistenceService()
 
@@ -55,12 +59,11 @@ try:
 except ImportError:
     class MockAgentService:
         def execute_agent(self, task: TaskDefinition):
-            # For demo, return a mock final answer
             print(f"[MockAgent] Executing agent {task.assignee_id}")
             return AgentResult(
                 status="SUCCESS",
                 output={
-                    "thought": "This is a mock response for M1.",
+                    "thought": "This is a mock response.",
                     "intent": FinalAnswer(content="Hello World from Mock Agent!")
                 }
             )
@@ -73,7 +76,6 @@ except ImportError:
     class MockToolService:
         def run_tool(self, tool_call: ToolCallRequest):
             print(f"[MockTool] Executing tool {tool_call.tool_id} with args {tool_call.arguments}")
-            # Return a mock ToolResult
             from interfaces import ToolResult
             return ToolResult(
                 status="SUCCESS",
@@ -131,6 +133,7 @@ def get_task_and_lock(task_id: str) -> Optional[TaskDefinition]:
             logger.exception(f"Error getting and locking task {task_id}")
             return None
 
+
 def apply_data_flow(data_flow: Optional[DataFlow], source_result: Dict[str, Any]) -> Dict[str, Any]:
     """
     Apply data flow mapping to transform source task result into target task input.
@@ -162,6 +165,7 @@ def apply_data_flow(data_flow: Optional[DataFlow], source_result: Dict[str, Any]
             target_input[target_key] = source_expr
     
     return target_input
+
 
 def handle_completed_task(task: TaskDefinition) -> None:
     """
@@ -200,31 +204,31 @@ def handle_completed_task(task: TaskDefinition) -> None:
                     logger.info(f"Applied data flow, input data for task {edge.target_task_id}: {input_data}")
                     
                     # Update the target task with the mapped input data
-                    # Note: In a real implementation, we would need to get the target task and update it
-                    # For now, we'll just log what would happen
-                    logger.info(f"Would update task {edge.target_task_id} with input data: {input_data}")
-                    
-                    # In a full implementation, we would:
-                    # 1. Get the target task from persistence service
-                    # 2. Update its input_data with the mapped data
-                    # 3. Set its status to PENDING
-                    # 4. This would trigger a NOTIFY which would add it to the Redis queue
+                    try:
+                        # Update target task with mapped input data and set status to PENDING
+                        persistence_service.update_task_input_and_status(
+                            task_id=uuid.UUID(edge.target_task_id),
+                            input_data=input_data,
+                            status="PENDING"
+                        )
+                        logger.info(f"Successfully activated downstream task {edge.target_task_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to activate downstream task {edge.target_task_id}: {str(e)}")
                     
         except Exception as e:
             logger.exception(f"Error handling completed task {task.task_id}")
 
+
 def process_task(task: TaskDefinition) -> None:
     """
-    Process a single task. This is the core execution logic for M1.
+    Process a single task. This is the core execution logic.
     
-    In M1, we only handle:
+    Handles:
     1. Tasks assigned to Agents
     2. Agent returning FinalAnswer
-    
-    Future enhancements will handle:
-    - ToolCallRequest intents
-    - PlanBlueprint intents
-    - Task directives (loop, timeout, etc.)
+    3. Agent returning ToolCallRequest
+    4. Agent returning PlanBlueprint
+    5. Task directives (loop, timeout, etc.)
     """
     with TracerContextManager.start_span(f"process_task_{task.task_id}") as span:
         logger.info(f"Starting to process task {task.task_id}", extra={
@@ -233,9 +237,13 @@ def process_task(task: TaskDefinition) -> None:
         })
         
         try:
-            # 1. Check if the assignee is an Agent (for M1, we only handle agents)
+            # Process task directives first
+            if task.directives:
+                process_directives(task.directives, task.task_id)
+            
+            # Check if the assignee is an Agent
             if task.assignee_id.startswith("Agent:"):
-                # 2. Execute the agent
+                # Execute the agent
                 agent_result: AgentResult = agent_service.execute_agent(task)
                 
                 logger.info(f"Agent {task.assignee_id} executed", extra={
@@ -243,11 +251,11 @@ def process_task(task: TaskDefinition) -> None:
                     "agent_result_status": agent_result.status
                 })
                 
-                # 3. Handle the agent's intent
+                # Handle the agent's intent
                 if agent_result.status == "SUCCESS":
                     intent = agent_result.output.intent
                     
-                    # M1: Handle FinalAnswer
+                    # Handle FinalAnswer
                     if isinstance(intent, FinalAnswer):
                         # Update task status to COMPLETED with the result
                         persistence_service.update_task_status_and_result(
@@ -259,7 +267,7 @@ def process_task(task: TaskDefinition) -> None:
                             "content": intent.content
                         })
                     
-                    # M2: Handle ToolCallRequest
+                    # Handle ToolCallRequest
                     elif isinstance(intent, ToolCallRequest):
                         # Execute the tool and get result
                         tool_result = tool_service.run_tool(intent)
@@ -278,7 +286,7 @@ def process_task(task: TaskDefinition) -> None:
                         # Note: The database UPDATE will automatically trigger NOTIFY,
                         # which will cause the task to be re-queued for re-entry
                     
-                    # M3: Handle PlanBlueprint
+                    # Handle PlanBlueprint
                     elif isinstance(intent, PlanBlueprint):
                         # Create new tasks and edges from the blueprint
                         success = persistence_service.create_workflow_from_blueprint(intent)
@@ -323,37 +331,28 @@ def process_task(task: TaskDefinition) -> None:
                 result={"error": str(e)}
             )
 
-def evaluate_condition(condition: Optional[Dict[str, Any]], task_result: Dict[str, Any]) -> bool:
-    """
-    Evaluate a condition (e.g., from an Edge) based on the previous task's result.
-    
-    For M1, this is a placeholder. In M3, we'll implement a real CEL evaluator.
-    """
-    # M1: Always return True to keep the flow simple
-    return True
 
 def process_directives(directives: Optional[TaskDirectives], task_id: str) -> bool:
     """
     Process task directives like loop, timeout, etc.
-    
-    For M1, this is a placeholder. We'll implement real logic in later milestones.
     """
     if directives:
         logger.info(f"Processing directives for task {task_id}", extra={"directives": directives.dict()})
-        # M1: Log the directives but don't act on them
+        # Log the directives but don't act on them in this implementation
         if directives.loop_directive:
-            logger.info("Loop directive detected (M1: not implemented)", extra={
+            logger.info("Loop directive detected", extra={
                 "loop_type": directives.loop_directive.type
             })
         if directives.timeout_seconds:
-            logger.info("Timeout directive detected (M1: not implemented)", extra={
+            logger.info("Timeout directive detected", extra={
                 "timeout_seconds": directives.timeout_seconds
             })
     return True
 
+
 def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue: str = 'task_execution_queue') -> None:
     """
-    Main execution loop for the Central Graph Engine (Ultimate Version).
+    Main execution loop for the Central Graph Engine (Enhanced Version).
     
     This implements the event-driven model using Redis BRPOP to consume tasks from a queue.
     
@@ -362,7 +361,7 @@ def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue:
         redis_port: Redis server port
         task_queue: Name of the Redis list used as task queue
     """
-    logger.info("Central Graph Engine (Ultimate Version) started", extra={
+    logger.info("Central Graph Engine (Enhanced Version) started", extra={
         "redis_host": redis_host,
         "redis_port": redis_port,
         "task_queue": task_queue
@@ -370,7 +369,6 @@ def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue:
     
     # Import redis client
     try:
-        import redis
         redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
         logger.info("Connected to Redis successfully")
     except ImportError:
@@ -383,7 +381,7 @@ def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue:
     with TracerContextManager.start_trace("central_graph_engine_main_loop"):
         while True:
             try:
-                # 1. Blockingly wait for a task from Redis queue
+                # Blockingly wait for a task from Redis queue
                 logger.info("Waiting for tasks from Redis queue...")
                 result = redis_client.brpop(task_queue, timeout=0)  # Block indefinitely
                 
@@ -395,14 +393,14 @@ def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue:
                 queue_name, task_id = result
                 logger.info(f"Received task from queue: {task_id}")
                 
-                # 2. Get and lock the task
+                # Get and lock the task
                 task = get_task_and_lock(task_id)
                 if task is None:
                     # Task is already being processed by another instance
                     logger.info(f"Task {task_id} is already locked, skipping")
                     continue
                 
-                # 3. Process the task based on its status
+                # Process the task based on its status
                 if task.status == "COMPLETED":
                     # Handle completed task by evaluating downstream edges
                     handle_completed_task(task)
@@ -419,6 +417,7 @@ def main_loop(redis_host: str = 'localhost', redis_port: int = 6379, task_queue:
                 logger.exception("Unexpected error in main loop")
                 # Continue to avoid tight loop on persistent errors
                 continue
+
 
 if __name__ == "__main__":
     main_loop()

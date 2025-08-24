@@ -6,9 +6,10 @@ It provides common functionality and interfaces for Agent development.
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from abc import ABC, abstractmethod
-from interfaces import AgentResult, FinalAnswer, ToolCallRequest, AgentIntent
+from interfaces import AgentResult, FinalAnswer, ToolCallRequest, AgentIntent, PlanBlueprint
+from uuid import UUID
 
 
 class BaseAgent(ABC):
@@ -19,6 +20,9 @@ class BaseAgent(ABC):
     1. Standard interfaces for Agent-System interactions
     2. Re-entry handling for LLM/Tool responses
     3. Helper methods for creating standardized intents
+    4. Context building integration (M3)
+    5. Prompt fusion strategy support (M3)
+    6. Planner agent support (M3)
     """
     
     def __init__(self, agent_config: Dict[str, Any], task_data: Dict[str, Any], 
@@ -35,6 +39,12 @@ class BaseAgent(ABC):
         self.task_data = task_data
         self.group_config = group_config
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Extract context config if available
+        self.context_config = agent_config.get('context_config', {})
+        
+        # Extract prompt fusion strategy if available
+        self.prompt_fusion_strategy = agent_config.get('prompt_fusion_strategy', {})
     
     def run(self) -> Dict:
         """
@@ -49,11 +59,17 @@ class BaseAgent(ABC):
         """
         self.logger.info("Agent execution started.")
         try:
-            # Determine if this is the first run or a re-entry
+            # Check if this is a Planner agent
+            if self._is_planner_agent():
+                return self._run_planner()
+            
+            # For regular agents, determine if this is the first run or a re-entry
             if self.is_first_run():
                 # First execution: generate dynamic prompt and request LLM call
                 dynamic_prompt = self._generate_dynamic_prompt()
-                result = self.request_llm_call(dynamic_prompt)
+                # Apply prompt fusion strategy
+                final_prompt = self._apply_prompt_fusion(dynamic_prompt)
+                result = self.request_llm_call(final_prompt)
             else:
                 # Re-entry: handle LLM or Tool response
                 result = self._handle_reentry()
@@ -64,7 +80,39 @@ class BaseAgent(ABC):
         except Exception as e:
             self.logger.error("Agent execution failed.", exc_info=True)
             return self.create_failure_response(
-                type="AGENT_EXECUTION_ERROR", 
+                type="VALIDATION_ERROR",
+                message=str(e)
+            )
+    
+    def _run_planner(self) -> Dict:
+        """
+        Special execution path for Planner agents.
+        
+        Returns:
+            Dict: An AgentResult dictionary with PlanBlueprint intent
+        """
+        try:
+            # Generate plan blueprint
+            plan_blueprint = self._generate_plan_blueprint()
+            
+            # Validate that the blueprint is valid
+            if not isinstance(plan_blueprint, PlanBlueprint):
+                raise ValueError("Planner agents must return a PlanBlueprint object")
+            
+            output = AgentIntent(
+                thought="Generated a workflow plan based on the user request.",
+                intent=plan_blueprint
+            )
+            
+            return AgentResult(
+                status="SUCCESS",
+                output=output
+            ).model_dump()
+            
+        except Exception as e:
+            self.logger.error("Planner agent execution failed.", exc_info=True)
+            return self.create_failure_response(
+                type="VALIDATION_ERROR",
                 message=str(e)
             )
     
@@ -121,6 +169,46 @@ class BaseAgent(ABC):
             Dict: An AgentResult dictionary
         """
         pass
+    
+    def _generate_plan_blueprint(self) -> PlanBlueprint:
+        """
+        Abstract method to generate a PlanBlueprint for Planner agents.
+        
+        This method must be implemented by Planner agent subclasses.
+        
+        Returns:
+            PlanBlueprint: The generated plan blueprint
+        """
+        raise NotImplementedError("Planner agents must implement _generate_plan_blueprint method")
+    
+    def _is_planner_agent(self) -> bool:
+        """
+        Check if this agent is a Planner agent based on its role.
+        
+        Returns:
+            bool: True if this is a Planner agent, False otherwise
+        """
+        return self.agent_config.get('role') == 'PLANNER'
+    
+    def _apply_prompt_fusion(self, dynamic_prompt: str) -> str:
+        """
+        Apply the prompt fusion strategy defined in the agent configuration.
+        
+        Args:
+            dynamic_prompt: The dynamically generated prompt
+            
+        Returns:
+            str: The final prompt after applying fusion strategy
+        """
+        strategy = self.prompt_fusion_strategy.get('mode', 'NONE')
+        
+        if strategy == 'PREPEND_BASE':
+            base_prompt = self.agent_config.get('base_prompt', '')
+            if base_prompt:
+                return f"{base_prompt}\n\n{dynamic_prompt}"
+        
+        # Default: return the dynamic prompt as-is
+        return dynamic_prompt
     
     def request_llm_call(self, prompt: str, tools: List = None) -> Dict:
         """

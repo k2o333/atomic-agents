@@ -7,8 +7,7 @@
       "version": "1.0.0",
       "type": "GENERIC",
       "role": "WORKER",
-      "implementation_path": "agentservice.generic_agents.HelloWorldAgent",
-      "entry_point": "HelloWorldAgent",
+      "implementation_path": "agentservice.generic_agents.HelloWorldAgent.HelloWorldAgent",
       "input_schema": {
         "type": "object",
         "properties": {},
@@ -23,6 +22,87 @@
           }
         },
         "required": ["content"]
+      }
+    },
+    {
+      "id": "generic_planner_agent",
+      "name": "Generic Planner Agent",
+      "description": "A generic planner agent that generates workflow plans",
+      "version": "1.0.0",
+      "type": "GENERIC",
+      "role": "PLANNER",
+      "implementation_path": "agentservice.baseagent.generic_planner_agent.GenericPlannerAgent",
+      "context_config": {
+        "include_metadata": true,
+        "include_tool_list": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "description": "The user request to plan for"
+          }
+        },
+        "required": ["request"]
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "object",
+            "description": "The generated plan blueprint"
+          }
+        },
+        "required": ["plan"]
+      }
+    },
+    {
+      "id": "context_aware_worker",
+      "name": "Context Aware Worker",
+      "description": "A worker agent that uses context building",
+      "version": "1.0.0",
+      "type": "GENERIC",
+      "role": "WORKER",
+      "implementation_path": "agentservice.generic_agents.HelloWorldAgent.HelloWorldAgent",
+      "context_config": {
+        "include_metadata": true,
+        "conversation_history_config": {
+          "max_turns": 10
+        }
+      },
+      "base_prompt": "You are a helpful assistant that considers context when responding.",
+      "prompt_fusion_strategy": {
+        "mode": "PREPEND_BASE"
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The response content"
+          }
+        },
+        "required": ["content"]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "CentralDecisionGroup",
+      "description": "接收所有初始请求，并进行顶层规划与协调。",
+      "planner_agent_id": "generic_planner_agent",
+      "planner_prompt_template": "As the master planner, your task is to analyze the user's request '{user_request}' and create a detailed PlanBlueprint. The available teams are: {team_list}.",
+      "authorized_tools": ["System.WorkflowBuilder.create_plan"],
+      "execution_patterns": {
+        "top_level_decomposition": {
+          "description": "顶层需求分解模式"
+        }
       }
     }
   ]

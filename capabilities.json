@@ -145,6 +145,27 @@
           },
           "required": ["message"]
         }
+      },
+      {
+        "id": "custom.search_weather",
+        "description": "搜索天气信息",
+        "implementation_path": "custom.search_weather.search_weather",
+        "signature": {
+          "parameters": {
+            "city": "string"
+          },
+          "return_type": "object"
+        },
+        "parameters_schema": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "要搜索天气的城市名称"
+            }
+          },
+          "required": ["city"]
+        }
       }
     ],
     "agents": [
@@ -163,6 +184,12 @@
         "prompt_fusion_strategy": {
           "mode": "PREPEND_BASE"
         }
+      },
+      {
+        "id": "WeatherAgent",
+        "role": "WORKER",
+        "description": "一个可以搜索天气信息的自定义Agent。",
+        "implementation_path": "custom.WeatherAgent.WeatherAgent"
       }
     ],
     "groups": [

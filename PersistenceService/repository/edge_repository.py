@@ -34,7 +34,7 @@ class EdgeRepository:
                         FROM edges
                         WHERE source_task_id = %s
                         ORDER BY created_at ASC
-                    """, (task_id,))
+                    """, (str(task_id),))
                     
                     edges = []
                     for row in cur.fetchall():
@@ -69,10 +69,40 @@ class EdgeRepository:
                         INSERT INTO edges (workflow_id, source_task_id, target_task_id, condition, data_flow)
                         VALUES (%s, %s, %s, %s, %s)
                         RETURNING id
-                    """, (workflow_id, source_task_id, target_task_id, 
+                    """, (str(workflow_id), str(source_task_id), str(target_task_id), 
                           json.dumps(condition) if condition else None,
                           json.dumps(data_flow) if data_flow else None))
                     
                     edge_id = cur.fetchone()[0]
                     logger.info("Edge created successfully", extra={"edge_id": str(edge_id)})
                     return edge_id
+    
+    def get_edges_by_workflow_id(self, workflow_id: UUID) -> List[EdgeRecord]:
+        """Get all edges for a specific workflow."""
+        with TracerContextManager.start_span("EdgeRepository.get_edges_by_workflow_id"):
+            logger.info("Fetching edges by workflow ID", extra={"workflow_id": str(workflow_id)})
+            
+            with self.db_manager.get_db_session() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT id, workflow_id, source_task_id, target_task_id, condition, data_flow, created_at
+                        FROM edges
+                        WHERE workflow_id = %s
+                        ORDER BY created_at ASC
+                    """, (str(workflow_id),))
+                    
+                    edges = []
+                    for row in cur.fetchall():
+                        edge_record = EdgeRecord(
+                            id=row[0],
+                            workflow_id=row[1],
+                            source_task_id=row[2],
+                            target_task_id=row[3],
+                            condition=row[4],
+                            data_flow=row[5],
+                            created_at=row[6]
+                        )
+                        edges.append(edge_record)
+                    
+                    logger.info("Edges retrieved by workflow ID", extra={"count": len(edges)})
+                    return edges

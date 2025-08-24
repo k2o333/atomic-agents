@@ -1,0 +1,24 @@
+{
+  "name": "PersistenceService-db-triggers",
+  "version": "1.0.0",
+  "description": "Database triggers and notify handlers for Persistence Service event-driven architecture",
+  "main": "notify_handler.py",
+  "scripts": {
+    "start": "python start_notify_handler.py",
+    "test": "python test_notify_handler.py"
+  },
+  "dependencies": {
+    "psycopg2": "^2.9.0",
+    "redis": "^4.5.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "postgresql",
+    "triggers",
+    "notify",
+    "redis",
+    "event-driven"
+  ],
+  "author": "Synapse Platform Team",
+  "license": "MIT"
+}
